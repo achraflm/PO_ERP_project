@@ -15,6 +15,9 @@ class ExpectedArrivalUpdateRequest(BaseModel):
 class StockSummaryItem(BaseModel):
     material_part_number: str
     description: str
+    material_type: str
+    critical_threshold: Decimal
+    unit_price: Decimal
     unit: str
     warehouse_quantity: Decimal
     production_quantity: Decimal
@@ -28,6 +31,10 @@ class StockSummaryItem(BaseModel):
 class StockSummaryListResponse(BaseModel):
     items: list[StockSummaryItem]
     total: int
+
+
+class MaterialThresholdUpdate(BaseModel):
+    critical_threshold: Decimal = Field(ge=0, max_digits=10, decimal_places=4)
 
 
 class ProductionStockItem(BaseModel):

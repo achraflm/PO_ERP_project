@@ -38,6 +38,7 @@ Permission = Literal[
     "simulation.view",
     "stock.assign_owner",
     "stock.transit.write",
+    "stock.threshold.write",
     "stock.cutman.import",
     "stock.receive",
     "stock.view",
@@ -103,6 +104,7 @@ ADMIN_PERMISSIONS: frozenset[Permission] = frozenset(
         "simulation.view",
         "stock.assign_owner",
         "stock.transit.write",
+        "stock.threshold.write",
         "stock.cutman.import",
         "stock.receive",
         "stock.view",
@@ -148,6 +150,7 @@ ROLE_PERMISSIONS: dict[RoleCode, frozenset[Permission]] = {
             "simulation.view",
             "stock.assign_owner",
             "stock.transit.write",
+            "stock.threshold.write",
             "stock.cutman.import",
             "stock.view",
         }
@@ -174,6 +177,7 @@ ROLE_PERMISSIONS: dict[RoleCode, frozenset[Permission]] = {
             "simulation.view",
             "stock.assign_owner",
             "stock.transit.write",
+            "stock.threshold.write",
             "stock.cutman.import",
             "stock.view",
         }

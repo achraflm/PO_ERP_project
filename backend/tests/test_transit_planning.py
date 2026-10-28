@@ -223,6 +223,10 @@ def test_arrival_date_http_contract(db, demand):
 
 
 def test_save_uses_top_level_target_date_and_rejects_mismatch(db, demand, monkeypatch):
+    from app.models import Document
+    db.add(Document(document_id=1, document_type="MTG_MINUTES", file_name="meeting.pdf",
+                    file_path="meeting.pdf", uploaded_at=datetime(2026, 11, 1), uploaded_by=ENGINEER_ID))
+    db.commit()
     add_stock(db, 20, eta=datetime(2026, 11, 11))
     saved = {}
     monkeypatch.setattr(simulation_repository, "count_user_simulations", lambda *args: 0)

@@ -11,6 +11,7 @@ from app.dependencies.db import get_db
 from app.policies import PolicyActor, policy_engine
 from app.schemas.stock import (
     ExpectedArrivalUpdateRequest,
+    MaterialThresholdUpdate,
     InTransitItem,
     StockSummaryListResponse,
     ProductionStockListResponse,
@@ -66,6 +67,20 @@ def get_stock_summary(
     """Get aggregated material availability across warehouse, production, and in-transit."""
     items = stock_management_service.get_stock_summary(db)
     return StockSummaryListResponse(items=items, total=len(items))
+
+
+@router.patch("/materials/{material_part_number}/threshold", response_model=MaterialThresholdUpdate)
+def update_material_threshold(
+    material_part_number: str,
+    request: MaterialThresholdUpdate,
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[PolicyActor, Depends(get_current_policy_actor)],
+) -> MaterialThresholdUpdate:
+    policy_engine.require(actor, "stock.threshold.write")
+    threshold = stock_management_service.update_material_threshold(
+        db, material_part_number, request.critical_threshold,
+    )
+    return MaterialThresholdUpdate(critical_threshold=threshold)
 
 
 @router.get("/production", response_model=ProductionStockListResponse)

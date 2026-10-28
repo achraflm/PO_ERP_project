@@ -483,6 +483,10 @@ def save_simulation(
     policy_engine.require(acting_actor, "simulation.run")
 
     # Enforce limit of 100 simulations per user
+    from app.models import Document
+    document = db.get(Document, request.mtg_minutes_document_id)
+    if document is None or document.document_type != "MTG_MINUTES":
+        raise ValidationException("Select an existing meeting-minutes document before saving the simulation.")
     user_uuid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
     current_count = simulation_repository.count_user_simulations(db, user_uuid)
     if current_count >= 100:

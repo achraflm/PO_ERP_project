@@ -10,7 +10,7 @@ from app.dependencies.db import get_db
 from app.exceptions.base import NotFoundException, ValidationException
 from app.models import CuttingReportImport
 from app.policies import PolicyActor, policy_engine
-from app.schemas.cutting_report import CuttingReportPostRequest, CuttingReportResponse
+from app.schemas.cutting_report import CuttingLaunchOption, CuttingReportPostRequest, CuttingReportResponse
 from app.services import cutting_report_service
 
 router = APIRouter(prefix="/stock/cutting-reports", tags=["stock"])
@@ -19,6 +19,11 @@ router = APIRouter(prefix="/stock/cutting-reports", tags=["stock"])
 @router.get("", response_model=list[CuttingReportResponse])
 def list_reports(db: Annotated[Session, Depends(get_db)], actor: Annotated[PolicyActor, Depends(get_current_policy_actor)]):
     return cutting_report_service.list_reports(db, actor=actor)
+
+
+@router.get("/launches", response_model=list[CuttingLaunchOption])
+def list_launch_options(db: Annotated[Session, Depends(get_db)], actor: Annotated[PolicyActor, Depends(get_current_policy_actor)]):
+    return cutting_report_service.list_launch_options(db, actor=actor)
 
 
 @router.post("", response_model=CuttingReportResponse)

@@ -1,5 +1,5 @@
 """Cutting report staging and explicit consumption confirmation."""
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
@@ -14,6 +14,8 @@ class CuttingReportLine(BaseModel):
     started_at: datetime
     spreading_usage: Decimal
     raw_fields: dict[str, str]
+    material_type: str | None = None
+    unit: str | None = None
 
 
 class CuttingReportResponse(BaseModel):
@@ -30,5 +32,11 @@ class CuttingReportResponse(BaseModel):
 
 class CuttingReportPostRequest(BaseModel):
     launch_id: int = Field(gt=0)
-    usage_unit: Literal["m", "sqm", "pcs", "kg"]
+    usage_unit: Literal["m", "sqm", "pcs", "kg"] | None = None
     confirm_usage_is_consumption: Literal[True]
+
+
+class CuttingLaunchOption(BaseModel):
+    launch_id: int
+    planned_date: date
+    status: str

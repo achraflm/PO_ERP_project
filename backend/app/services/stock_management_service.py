@@ -14,9 +14,11 @@ from sqlalchemy.orm import Session
 
 from app.exceptions.base import ConflictException, NotFoundException, ValidationException
 from app.models.audit_log import AuditLog
+from app.models.material import Material
 from app.models.stock_unit import StockUnit
 from app.policies import PolicyActor, policy_engine, system_actor
 from app.repositories import stock_repository
+from app.services.material_metadata import bom_material_metadata
 from app.policies.rules import is_assignable_stock_owner
 from app.schemas.stock import (
     ExpectedArrivalUpdateRequest,
@@ -48,6 +50,7 @@ def get_stock_summary(db: Session) -> list[StockSummaryItem]:
     in_transit_stock = stock_repository.get_in_transit_stock_by_material(db)
     consumption = stock_repository.get_cutting_consumption_by_material(db)
     materials = stock_repository.get_all_materials(db)
+    metadata = bom_material_metadata(db)
     
     results = []
     for material, mtype in materials:
@@ -69,7 +72,10 @@ def get_stock_summary(db: Session) -> list[StockSummaryItem]:
             results.append(StockSummaryItem(
                 material_part_number=mpn,
                 description=material.description,
-                unit=mtype.unit,
+                material_type=metadata.get(mpn, (mtype.name, mtype.unit))[0],
+                critical_threshold=material.critical_threshold or Decimal('0'),
+                unit_price=material.unit_price,
+                unit=metadata.get(mpn, (mtype.name, mtype.unit))[1],
                 warehouse_quantity=w_qty,
                 production_quantity=p_qty,
                 in_transit_quantity=t_qty,
@@ -78,6 +84,16 @@ def get_stock_summary(db: Session) -> list[StockSummaryItem]:
             ))
             
     return results
+
+
+def update_material_threshold(db: Session, part_number: str, threshold: Decimal) -> Decimal:
+    material = db.scalar(select(Material).where(Material.material_part_number == part_number))
+    if material is None:
+        raise NotFoundException(f"Material {part_number} was not found.")
+    material.critical_threshold = threshold
+    db.commit()
+    db.refresh(material)
+    return material.critical_threshold
 
 
 def get_production_stock(db: Session) -> list[ProductionStockItem]:

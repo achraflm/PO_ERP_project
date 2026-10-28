@@ -9,6 +9,7 @@ import logging
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from app.exceptions.base import AppException
@@ -47,7 +48,7 @@ def register_exception_handlers(app: FastAPI) -> None:
             content=_error_body(
                 "REQUEST_VALIDATION_ERROR",
                 "The request payload failed validation.",
-                exc.errors(),
+                jsonable_encoder(exc.errors()),
             ),
         )
 

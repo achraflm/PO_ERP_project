@@ -254,10 +254,14 @@ def test_new_business_workbook_upload_preserves_units_and_versions_each_fgpn(
     assert result.uploaded_count == 2
     assert [version.finished_good_part_number for version in result.versions] == FGPN_CODES
     assert [version.version for version in result.versions] == [2, 2]
+    summary = {item.material_part_number: item for item in stock_management_service.get_stock_summary(db_session)}
     for version in result.versions:
         assert version.material_row_count == 3
         assert [line.source_unit for line in version.material_lines] == ["ME", "EA", "EA"]
         assert [line.unit for line in version.material_lines] == ["ME", "EA", "EA"]
+        for line in version.material_lines:
+            assert summary[line.material_part_number].unit == line.source_unit
+            assert summary[line.material_part_number].material_type == line.part_type
         assert version.material_lines[0].total_sqm == Decimal("0.2669")
         assert version.material_lines[0].total_quantity == Decimal("0")
     assert db_session.scalar(select(func.count()).select_from(BOM)) == 4

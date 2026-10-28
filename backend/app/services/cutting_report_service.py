@@ -15,27 +15,43 @@ from app.exceptions.base import ConflictException, NotFoundException, Validation
 from app.models import AuditLog, CuttingConsumption, CuttingReportImport, Document, Launch, Material
 from app.policies import PolicyActor, policy_engine
 from app.repositories import stock_repository
-from app.schemas.cutting_report import CuttingReportPostRequest, CuttingReportResponse
+from app.services.material_metadata import bom_material_metadata
+from app.schemas.cutting_report import CuttingLaunchOption, CuttingReportPostRequest, CuttingReportResponse
 from app.utils.cutting_report_extractor import extract_cutting_report
 
 
-def _response(report: CuttingReportImport, *, duplicate=False) -> CuttingReportResponse:
+def _response(report: CuttingReportImport, db: Session, *, duplicate=False) -> CuttingReportResponse:
+    metadata = bom_material_metadata(db)
+    materials = {m.material_part_number: m for m in db.scalars(select(Material)).all()}
+    lines = []
+    for row in report.source_rows:
+        material = materials.get(row["material_part_number"])
+        fallback = (material.material_type.name, material.material_type.unit) if material else (None, None)
+        kind, unit = metadata.get(row["material_part_number"], fallback)
+        lines.append({**row, "material_type": kind, "unit": unit})
     return CuttingReportResponse(
         report_id=report.report_id, file_name=report.file_name,
         imported_at=report.imported_at, posted_at=report.posted_at,
         posted_launch_id=report.posted_launch_id, confirmed_usage_unit=report.confirmed_usage_unit,
-        already_imported=duplicate, lines=report.source_rows,
+        already_imported=duplicate, lines=lines,
         warnings=[] if report.posted_at else [
             "Spreading Usage is a reported usage quantity, not a remaining-stock balance.",
-            "Confirm the launch, measurement unit and consumption basis before posting. Import alone does not change stock.",
+            "Units and material types are read from the database BOM. Confirm the launch and consumption basis before posting. Import alone does not change stock.",
         ],
     )
+
+
+def list_launch_options(db: Session, *, actor: PolicyActor) -> list[CuttingLaunchOption]:
+    policy_engine.require(actor, "stock.cutman.import")
+    launches = db.scalars(select(Launch).order_by(Launch.planned_date.desc(), Launch.launch_id.desc())).all()
+    return [CuttingLaunchOption(launch_id=launch.launch_id, planned_date=launch.planned_date,
+                               status=launch.status) for launch in launches]
 
 
 def list_reports(db: Session, *, actor: PolicyActor) -> list[CuttingReportResponse]:
     policy_engine.require(actor, "stock.view")
     reports = db.scalars(select(CuttingReportImport).order_by(CuttingReportImport.imported_at.desc()).limit(50)).all()
-    return [_response(report) for report in reports]
+    return [_response(report, db) for report in reports]
 
 
 def import_report(db: Session, content: bytes, filename: str, user_id: uuid.UUID, *, actor: PolicyActor) -> CuttingReportResponse:
@@ -44,7 +60,7 @@ def import_report(db: Session, content: bytes, filename: str, user_id: uuid.UUID
     digest = sha256(content).hexdigest()
     existing = db.scalar(select(CuttingReportImport).where(CuttingReportImport.file_sha256 == digest))
     if existing:
-        return _response(existing, duplicate=True)
+        return _response(existing, db, duplicate=True)
     report = CuttingReportImport(file_name=Path(filename).name[:255], file_sha256=digest,
         source_content=content, source_rows=[row.as_dict() for row in rows],
         imported_by=user_id, imported_at=datetime.now())
@@ -58,9 +74,9 @@ def import_report(db: Session, content: bytes, filename: str, user_id: uuid.UUID
         db.rollback()
         existing = db.scalar(select(CuttingReportImport).where(CuttingReportImport.file_sha256 == digest))
         if existing:
-            return _response(existing, duplicate=True)
+            return _response(existing, db, duplicate=True)
         raise ConflictException("Could not record this cutting report.") from exc
-    return _response(report)
+    return _response(report, db)
 
 
 def post_report(db: Session, report_id: int, request: CuttingReportPostRequest, user_id: uuid.UUID, *, actor: PolicyActor) -> CuttingReportResponse:
@@ -80,7 +96,7 @@ def post_report(db: Session, report_id: int, request: CuttingReportPostRequest, 
 
     totals = defaultdict(Decimal)
     normalized_rows = []
-    unit_aliases = {"m": "m", "meter": "m", "meters": "m", "sqm": "sqm", "m2": "sqm", "pcs": "pcs", "ea": "pcs", "kg": "kg"}
+    unit_aliases = {"m": "m", "meter": "m", "meters": "m", "me": "m", "sqm": "sqm", "m2": "sqm", "pcs": "pcs", "ea": "pcs", "kg": "kg"}
     for row in report.source_rows:
         amount = Decimal(row["spreading_usage"]).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
         if amount <= 0 or amount > Decimal("999999.9999"):
@@ -93,17 +109,24 @@ def post_report(db: Session, report_id: int, request: CuttingReportPostRequest, 
     material_map = {material.material_part_number: material for material in materials}
     sent = stock_repository.get_production_stock_by_material(db)
     consumed = stock_repository.get_cutting_consumption_by_material(db)
+    metadata = bom_material_metadata(db)
+    units = set()
     for part, amount in totals.items():
         material = material_map.get(part)
         if material is None:
             raise ValidationException(f"Unknown material {part}. Resolve its master-data mapping before posting.")
-        stored_unit = unit_aliases.get(material.material_type.unit.strip().lower())
-        if stored_unit != request.usage_unit:
+        source_unit = metadata.get(part, (material.material_type.name, material.material_type.unit))[1]
+        stored_unit = unit_aliases.get(source_unit.strip().lower(), source_unit.strip().lower())
+        units.add(stored_unit)
+        if request.usage_unit is not None and stored_unit != request.usage_unit:
             raise ValidationException(f"Material {part} has unit {material.material_type.unit}; it does not match confirmed usage unit {request.usage_unit}.")
         remaining = max(Decimal("0"), sent.get(part, Decimal("0")) - consumed.get(part, Decimal("0")))
         if amount > remaining:
             raise ValidationException(f"Reported usage {amount} for {part} exceeds remaining received production stock {remaining}. Reconcile receipts/units before posting.")
 
+    if len(units) != 1:
+        raise ValidationException("This report mixes material units. Split it by unit before posting consumption.")
+    usage_unit = next(iter(units))
     now = datetime.now()
     document = Document(document_type="CUTMAN_REPORT", file_name=report.file_name,
         file_path=f"/stock/cutting-reports/{report.report_id}/source", uploaded_at=report.imported_at,
@@ -119,11 +142,11 @@ def post_report(db: Session, report_id: int, request: CuttingReportPostRequest, 
         report.posted_launch_id = request.launch_id
         report.posted_by = user_id
         report.posted_at = now
-        report.confirmed_usage_unit = request.usage_unit
+        report.confirmed_usage_unit = usage_unit
         db.add(AuditLog(user_id=user_id, action="POST_CUTTING_CONSUMPTION", entity_type="CuttingReportImport",
-            entity_id=report_id, timestamp=now, details=json.dumps({"launch_id": request.launch_id, "unit": request.usage_unit, "materials": {part: str(amount) for part, amount in totals.items()}})))
+            entity_id=report_id, timestamp=now, details=json.dumps({"launch_id": request.launch_id, "unit": usage_unit, "materials": {part: str(amount) for part, amount in totals.items()}})))
         db.commit()
     except IntegrityError as exc:
         db.rollback()
         raise ConflictException("A cutting event was posted concurrently; refresh the report history.") from exc
-    return _response(report)
+    return _response(report, db)
